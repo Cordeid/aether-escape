@@ -1,9 +1,8 @@
 /* === Aether Station home background === */
 body {
-  /* dark overlay + image */
   background:
-    radial-gradient(1200px 600px at 50% 20%, rgba(0, 10, 20, 0.4), rgba(0, 0, 0, 0.85)),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.9)),
+    radial-gradient(1400px 800px at 50% 20%, rgba(0, 10, 20, 0.25), rgba(0, 0, 0, 0.65)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.7)),
     url("/aether-bg.jpg") center/cover fixed no-repeat;
   color: #cfe;
 }
