@@ -1,0 +1,5 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; background: #010912; color: #cfe; }
+a { color: #9ef; text-decoration: none; }
