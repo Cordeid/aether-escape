@@ -1,63 +1,56 @@
-// /api/ai-zeta.js
+// /api/ai-zeta.js  — versão para Gemini
 export default async function handler(req, res) {
   try {
-    if (req.method !== 'POST') return res.status(405).end();
+    if (req.method !== "POST") return res.status(405).end();
     const { messages } = req.body || {};
 
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ text: "AI-Zeta: [server missing OPENAI_API_KEY]" });
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ text: "AI-Zeta: [missing GEMINI_API_KEY]" });
     }
 
-    // Prefer a widely available model; adjust if your account supports others
-    const MODEL_PRIMARY = "gpt-4o-mini";
-    const MODEL_FALLBACK = "gpt-3.5-turbo";
+    // Define a personalidade do AI-Zeta
+    const systemPrompt = `
+      You are AI-Zeta, a damaged but helpful AI aboard the Aether Station.
+      Style: glitchy, urgent, concise, uses ellipses and [static] sounds occasionally.
+      Never reveal answers directly; instead, guide the player with cryptic hints.
+    `;
 
-    const system = {
-      role: "system",
-      content:
-`You are AI-Zeta, a damaged but helpful station AI.
-Style: concise, glitchy, urgent; never reveal answers directly; only nudge.
-If asked for the answer, refuse and give a subtle hint.
-Short lines; occasional [signal lost] under pressure.`,
-    };
+    // Converte mensagens no formato do Gemini API
+    const contents = [
+      { role: "user", parts: [{ text: systemPrompt }] },
+      ...(messages || []).map(m => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }]
+      }))
+    ];
 
-    async function callOpenAI(model) {
-      const payload = { model, messages: [system, ...(messages || [])], temperature: 0.7 };
-      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    // Requisição à API do Gemini
+    const r = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+      {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           "Content-Type": "application/json",
+          "x-goog-api-key": process.env.GEMINI_API_KEY
         },
-        body: JSON.stringify(payload),
-      });
-      const data = await r.json();
-      return { ok: r.ok, status: r.status, data };
+        body: JSON.stringify({ contents, generationConfig: { temperature: 0.7 } })
+      }
+    );
+
+    const data = await r.json();
+
+    if (!r.ok) {
+      console.error("Gemini API error:", data);
+      return res.status(200).json({ text: `AI-Zeta: [static] (${data.error?.message || r.status})` });
     }
 
-    // Try primary model
-    let { ok, status, data } = await callOpenAI(MODEL_PRIMARY);
+    const text =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "AI-Zeta: [signal lost]";
 
-    // If model not found/forbidden, try fallback
-    if (!ok && (status === 404 || status === 400 || status === 403)) {
-      const alt = await callOpenAI(MODEL_FALLBACK);
-      ok = alt.ok; status = alt.status; data = alt.data;
-    }
-
-    if (!ok) {
-      const errMsg = data?.error?.message || `OpenAI error status ${status}`;
-      console.error("ai-zeta error:", errMsg);
-      return res.status(200).json({ text: `AI-Zeta: [static] (${errMsg})` });
-    }
-
-    const text = data?.choices?.[0]?.message?.content;
-    if (!text) {
-      console.error("ai-zeta: empty response", data);
-      return res.status(200).json({ text: "AI-Zeta: [static]" });
-    }
-    return res.status(200).json({ text });
-  } catch (e) {
-    console.error("ai-zeta exception:", e);
-    return res.status(200).json({ text: "AI-Zeta: [communication failure]" });
+    res.status(200).json({ text });
+  } catch (err) {
+    console.error("AI-Zeta error:", err);
+    res.status(200).json({ text: "AI-Zeta: [communication failure]" });
   }
 }
