@@ -1,5 +1,84 @@
-:root { color-scheme: dark; }
-* { box-sizing: border-box; }
-html, body, #root { height: 100%; }
-body { margin: 0; font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; background: #010912; color: #cfe; }
-a { color: #9ef; text-decoration: none; }
+/* === Aether Station home background === */
+body {
+  /* dark overlay + image */
+  background:
+    radial-gradient(1200px 600px at 50% 20%, rgba(0, 10, 20, 0.4), rgba(0, 0, 0, 0.85)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.9)),
+    url("/aether-bg.jpg") center/cover fixed no-repeat;
+  color: #cfe;
+}
+
+/* center the hero content */
+.hero {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+}
+
+/* glassy card for readability */
+.glass {
+  width: 100%;
+  max-width: 760px;
+  padding: 28px;
+  border-radius: 16px;
+  background: rgba(1, 9, 18, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+h1.hero-title {
+  margin: 0 0 8px;
+  font-size: clamp(28px, 5vw, 46px);
+  color: #c9fff1;
+  letter-spacing: 0.3px;
+}
+
+.hero-sub {
+  margin: 0 0 16px;
+  color: #b9e6ff;
+  opacity: 0.9;
+}
+
+.hero-story {
+  margin: 10px 0 18px;
+  line-height: 1.5;
+  color: #d6f8ff;
+}
+
+.hero-howto {
+  margin: 0 0 18px;
+  padding-left: 18px;
+  color: #d3f4ff;
+}
+
+.form-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #28485a;
+  background: rgba(1, 19, 33, 0.9);
+  color: #eaffff;
+}
+
+.btn {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid #2e6a5c;
+  background: #0a2c27;
+  color: #bafee6;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
