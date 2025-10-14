@@ -1,28 +1,189 @@
-// src/lib/engine.js
+// src/App.jsx
+import React, { useEffect, useRef, useState } from "react";
 
-export const TOTAL_SECONDS = 600; // 10 minutes
+// ✅ Global styles (loads the background image + base layout)
+import "./styles/global.css";
 
-export function nextHintIndex(elapsedInPuzzleSec) {
-  if (elapsedInPuzzleSec >= 150) return 1; // big hint after 2:30
-  if (elapsedInPuzzleSec >= 90) return 0;  // small hint after 1:30
-  return -1;
-}
+// Screens / UI
+import StartScreen from "./components/StartScreen";
+import LobbyScreen from "./components/LobbyScreen";
+import Chat from "./components/Chat";
+import PuzzleCard from "./components/PuzzleCard";
+import HUDTimer from "./components/HUDTimer";
+import VictoryScreen from "./components/VictoryScreen";
+import GameOverScreen from "./components/GameOverScreen";
 
-export function isTimeUp(globalSecondsLeft) {
-  return globalSecondsLeft <= 0;
-}
+// Game data / logic
+import { PUZZLES } from "./data/puzzles";
+import { isTimeUp, TOTAL_SECONDS, advance } from "./lib/engine";
 
-export function advance(chan, setIdx, idx, setPhase, stopTicker, setChat) {
-  console.log('Executing advance function'); // Debug
-  if (idx + 1 >= PUZZLES.length) {
-    console.log('Win condition met'); // Debug
-    setPhase("win");
-    stopTicker();
-    setChat(prev => [...prev, { role: "assistant", content: "AI-Zeta: Escape vector locked. Hold on…" }]);
-    if (chan) chan.send("state", { win: true });
-  } else {
-    console.log('Advancing to next puzzle'); // Debug
-    setIdx(prev => prev + 1); // Use prev to ensure latest state
-    if (chan) chan.send("state", { idx: idx + 1 });
+// AI (AI-Zeta)
+import { zetaSpeak } from "./services/aiClient";
+
+// Realtime (Supabase)
+import { joinRoom } from "./services/realtime";
+
+/**
+ * Phases:
+ *  - "start" : nickname entry (StartScreen)
+ *  - "lobby" : players gather & chat, host starts the run (LobbyScreen)
+ *  - "game"  : shared chat + puzzles + synced 10:00 timer
+ *  - "win"   : victory screen
+ *  - "lose"  : game over (timer reached zero)
+ */
+export default function App() {
+  const [phase, setPhase] = useState("start");
+  const [nickname, setNickname] = useState("");
+
+  // Lobby/game context
+  const [lobby, setLobby] = useState(null); // { roomId, startAt, players, isHost }
+  const [idx, setIdx] = useState(0);        // current puzzle index
+  const current = PUZZLES[idx];
+
+  // Chat + timer
+  const [chat, setChat] = useState([]);
+  const [secondsLeft, setSecondsLeft] = useState(TOTAL_SECONDS);
+
+  // Realtime channel for the GAME (separate from lobby channel)
+  const chanRef = useRef(null);
+
+  // Shared start anchor: Date.now() when host pressed Start (broadcast)
+  const startAtRef = useRef(null);
+  const tickerRef = useRef(null);
+
+  // ─────────────────────────────────────────────────────────────
+  // Start → Lobby
+  // ─────────────────────────────────────────────────────────────
+  async function begin(name) {
+    setNickname(name);
+    setPhase("lobby");
   }
+
+  async function onLobbyReady({ roomId, startAt, players, isHost }) {
+    setLobby({ roomId, startAt, players, isHost });
+    setPhase("game");
+    startAtRef.current = startAt;
+    startTicker();
+    try {
+      chanRef.current = await joinRoom(roomId, { id: crypto.randomUUID(), name: nickname });
+      const welcome = await zetaSpeak([{ role: "user", content: "Introduce the game as AI-Zeta." }]);
+      setChat([...chat, { role: "assistant", content: welcome }]);
+      chanRef.current.send("ai", { text: welcome });
+    } catch (err) {
+      console.error("Lobby ready failed:", err.message, err.stack);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Timer
+  // ─────────────────────────────────────────────────────────────
+  function startTicker() {
+    tickerRef.current = setInterval(() => {
+      const secs = Math.max(0, TOTAL_SECONDS - Math.floor((Date.now() - startAtRef.current) / 1000));
+      setSecondsLeft(secs);
+      if (secs <= 0) {
+        stopTicker();
+        setPhase("lose");
+        if (chanRef.current) chanRef.current.send("state", { lose: true });
+      }
+    }, 1000);
+  }
+
+  function stopTicker() {
+    if (tickerRef.current) clearInterval(tickerRef.current);
+    tickerRef.current = null;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Puzzle submit (from PuzzleCard)
+  // ─────────────────────────────────────────────────────────────
+  async function handleSubmit(answer) {
+    console.log("Handling submit with answer:", answer);
+    if (!answer.trim()) return;
+
+    try {
+      const correct = current?.answer?.(answer) ?? false; // Safe check
+      console.log("Answer correct:", correct);
+      if (chanRef.current) chanRef.current.send("try", { answer, nick: nickname });
+
+      if (correct) {
+        console.log("Advancing from idx:", idx, "to", idx + 1);
+        advance(chanRef.current, setIdx, idx, setPhase, stopTicker, setChat);
+      } else {
+        const nudge = await zetaSpeak([
+          {
+            role: "user",
+            content: `Wrong attempt for puzzle "${current.id}": "${answer}". Provide a subtle nudge (no spoilers) in one short line, in character.`,
+          },
+        ]);
+        if (chanRef.current) chanRef.current.send("ai", { text: nudge });
+      }
+    } catch (err) {
+      console.error("Submit failed:", err.message, err.stack);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Restart (back to start screen)
+  // ─────────────────────────────────────────────────────────────
+  function restart() {
+    stopTicker();
+    setPhase("start");
+    setNickname("");
+    setLobby(null);
+    setIdx(0);
+    setChat([]);
+    setSecondsLeft(TOTAL_SECONDS);
+    startAtRef.current = null;
+  }
+
+  // Debug logging (remove in production)
+  useEffect(() => {
+    console.log('Current puzzle:', current);
+  }, [idx, phase]);
+
+  useEffect(() => {
+    console.log('Idx updated to:', idx);
+  }, [idx]);
+
+  // ─────────────────────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────────────────────
+  return (
+    <div style={{ maxWidth: 900, margin: "40px auto", padding: 12 }}>
+      {phase === "start" && <StartScreen onStart={begin} />}
+
+      {phase === "lobby" && (
+        <LobbyScreen nickname={nickname} onReady={onLobbyReady} />
+      )}
+
+      {phase === "game" && (
+        <>
+          <HUDTimer secondsLeft={secondsLeft} />
+          <Chat messages={chat} />
+          {current && (
+            <PuzzleCard
+              key={current.id}
+              puzzle={current}
+              onSolve={handleSubmit}
+            />
+          )}
+        </>
+      )}
+
+      {phase === "win" && (
+        <VictoryScreen
+          nickname={nickname}
+          secondsLeft={secondsLeft}
+          onRestart={restart}
+        />
+      )}
+
+      {phase === "lose" && (
+        <GameOverScreen onRestart={restart} />
+      )}
+    </div>
+  );
+
+  export default App; // Add this line to fix the export
 }
