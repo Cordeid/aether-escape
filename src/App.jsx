@@ -92,8 +92,10 @@ export default function App() {
       if (chanRef.current) chanRef.current.send("try", { answer, nick: nickname });
 
       if (correct) {
-        console.log("Advancing from idx:", idx, "to", idx + 1);
+        console.log("Advancing from idx:", idx, "to", idx + 1, "PUZZLES.length:", PUZZLES.length);
         advance(chanRef.current, setIdx, idx, setPhase, stopTicker, setChat);
+        // Force re-render check
+        console.log("After advance, idx should be:", idx + 1);
       } else {
         const nudge = await zetaSpeak([
           {
@@ -120,7 +122,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    console.log('Current puzzle:', current);
+    console.log('Current puzzle:', current, 'idx:', idx);
   }, [idx, phase]);
 
   useEffect(() => {

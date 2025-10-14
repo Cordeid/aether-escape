@@ -12,7 +12,7 @@ export function isTimeUp(globalSecondsLeft) {
 }
 
 export function advance(chan, setIdx, idx, setPhase, stopTicker, setChat) {
-  console.log('Executing advance function');
+  console.log('Executing advance function', 'idx:', idx, 'PUZZLES.length:', PUZZLES.length);
   if (idx + 1 >= PUZZLES.length) {
     console.log('Win condition met');
     setPhase("win");
@@ -20,7 +20,7 @@ export function advance(chan, setIdx, idx, setPhase, stopTicker, setChat) {
     setChat(prev => [...prev, { role: "assistant", content: "AI-Zeta: Escape vector locked. Hold on…" }]);
     if (chan) chan.send("state", { win: true });
   } else {
-    console.log('Advancing to next puzzle');
+    console.log('Advancing to next puzzle', 'new idx:', idx + 1);
     setIdx(prev => prev + 1);
     if (chan) chan.send("state", { idx: idx + 1 });
   }
