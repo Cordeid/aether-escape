@@ -1,9 +1,7 @@
-// /api/ai-zeta.js
-// Vercel Serverless Function (CommonJS)
+// api/ai-zeta.js  (ESM because package.json has "type":"module")
+const MAX_TOKENS = 250;
 
-const MAX_TOKENS = 250; // keep replies short
-
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   try {
     if (req.method === "GET") {
       // health check
@@ -13,13 +11,15 @@ module.exports = async (req, res) => {
       return res.status(405).json({ error: "Method not allowed" });
     }
 
-    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+    // body may be an object already or a JSON string
+    const body =
+      typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
     const messages = Array.isArray(body.messages) ? body.messages : [];
 
     const system = {
       role: "system",
       content:
-        "You are AI-Zeta, a damaged but helpful space-station AI. Speak concisely, glitchy, immersive. Never reveal puzzle answers outright; provide gentle nudges only.",
+        "You are AI-Zeta, a damaged but helpful space-station AI. Speak concisely and in-character (glitchy/urgent). Give nudges, never full answers.",
     };
 
     const GEMINI_KEY = process.env.GEMINI_API_KEY;
@@ -27,27 +27,29 @@ module.exports = async (req, res) => {
 
     if (!GEMINI_KEY && !OPENAI_KEY) {
       return res.status(500).json({
-        error: "No model key configured. Set GEMINI_API_KEY or OPENAI_API_KEY in Vercel → Project → Settings → Environment Variables.",
+        error:
+          "No model key configured. Set GEMINI_API_KEY or OPENAI_API_KEY in Vercel → Project → Settings → Environment Variables.",
       });
     }
 
-    // ── Try Gemini first ───────────────────────────────────────────────────────
+    // ── Prefer Gemini ─────────────────────────────────────────────────────────
     if (GEMINI_KEY) {
       const url =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" +
-        encodeURIComponent(GEMINI_KEY);
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        + `?key=${encodeURIComponent(GEMINI_KEY)}`;
 
-      // Gemini expects "contents": [{role:'user'|'model', parts:[{text}]}]
-      // We’ll merge the system into the first user message.
+      // Gemini expects: contents: [{ role:'user'|'model', parts:[{text}] }]
       const oai = [system, ...messages];
       const firstUserIndex = oai.findIndex((m) => m.role === "user");
       let merged = oai.slice();
+
+      // Merge system into first user message (Gemini has no system role)
       if (firstUserIndex >= 0) {
         merged[firstUserIndex] = {
           role: "user",
           content: `${system.content}\n\n${oai[firstUserIndex].content}`,
         };
-        merged = merged.filter((m, i) => i !== 0); // drop original system at index 0
+        merged = merged.filter((m, i) => !(i === 0 && oai[0].role === "system"));
       }
 
       const contents = merged.map((m) => ({
@@ -74,12 +76,11 @@ module.exports = async (req, res) => {
         data?.candidates?.[0]?.content?.parts?.map((p) => p?.text).join("") ||
         data?.candidates?.[0]?.content?.parts?.[0]?.text ||
         "";
-
       if (!text) return res.status(500).json({ error: "Gemini: empty response" });
       return res.status(200).json({ text });
     }
 
-    // ── Fallback: OpenAI ───────────────────────────────────────────────────────
+    // ── Fallback: OpenAI ──────────────────────────────────────────────────────
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -102,10 +103,9 @@ module.exports = async (req, res) => {
 
     const text = data?.choices?.[0]?.message?.content || "";
     if (!text) return res.status(500).json({ error: "OpenAI: empty response" });
-
     return res.status(200).json({ text });
   } catch (err) {
     console.error("ai-zeta server error:", err);
     return res.status(500).json({ error: err?.message || "Unknown server error" });
   }
-};
+}
