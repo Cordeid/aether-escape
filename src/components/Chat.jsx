@@ -28,7 +28,7 @@ export default function Chat({ messages, onSend }) {
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Send a message to the crew…"
+            placeholder='Type a message… (tip: "/z your question" talks to AI-Zeta)'
             style={{
               flex: 1,
               background: "#030",

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 
-// ✅ Global styles (loads the background image + base layout)
+// ✅ Global styles
 import "./styles/global.css";
 
 // Screens / UI
@@ -14,7 +14,7 @@ import GameOverScreen from "./components/GameOverScreen";
 
 // Game data / logic
 import { PUZZLES } from "./data/puzzles";
-import { isTimeUp, TOTAL_SECONDS, advance } from "./lib/engine";
+import { TOTAL_SECONDS } from "./lib/engine"; // we won't rely on advance() anymore
 
 // AI (AI-Zeta)
 import { zetaSpeak } from "./services/aiClient";
@@ -35,7 +35,7 @@ export default function App() {
   const [chat, setChat] = useState([]);
   const [secondsLeft, setSecondsLeft] = useState(TOTAL_SECONDS);
 
-  // Realtime channel for the GAME (separate from lobby channel)
+  // Realtime channel for the GAME
   const chanRef = useRef(null);
 
   // Shared start anchor: Date.now() when host pressed Start (broadcast)
@@ -52,27 +52,41 @@ export default function App() {
     setPhase("game");
     startAtRef.current = startAt;
     startTicker();
+
     try {
-      // join game channel
+      // Join the game channel for everyone
       chanRef.current = await joinRoom(roomId, { id: crypto.randomUUID(), name: nickname });
       console.log("Channel initialized:", !!chanRef.current);
 
-      // --- NEW: subscribe to game-phase events ---
+      // --- GAME-PHASE LISTENERS (everyone receives updates) ---
       chanRef.current.on("ai", ({ text }) => {
         setChat((c) => [...c, { role: "assistant", content: text }]);
       });
+
       chanRef.current.on("chat", ({ from, text }) => {
-        // Render as a user message; you could tag with from if you prefer
         setChat((c) => [...c, { role: "user", content: `${from}: ${text}` }]);
       });
+
       chanRef.current.on("try", ({ nick, answer }) => {
-        // Optional feed of attempts
         setChat((c) => [...c, { role: "user", content: `${nick} tried: ${answer}` }]);
       });
 
-      // Initial AI welcome
+      chanRef.current.on("state", (payload) => {
+        // Optional: keep idx/phase in sync if another client drives it
+        if (typeof payload?.nextIdx === "number") setIdx(payload.nextIdx);
+        if (payload?.win) {
+          stopTicker();
+          setPhase("win");
+        }
+        if (payload?.lose) {
+          stopTicker();
+          setPhase("lose");
+        }
+      });
+
+      // Initial AI welcome for all
       const welcome = await zetaSpeak([{ role: "user", content: "Introduce the game as AI-Zeta." }]);
-      setChat((c) => [...c, { role: "assistant", content: welcome }]); // functional update (prevents stale state)
+      setChat((c) => [...c, { role: "assistant", content: welcome }]);
       chanRef.current.send("ai", { text: welcome });
     } catch (err) {
       console.error("Lobby ready failed:", err.message, err.stack);
@@ -87,7 +101,7 @@ export default function App() {
       if (secs <= 0) {
         stopTicker();
         setPhase("lose");
-        if (chanRef.current) chanRef.current.send("state", { lose: true });
+        chanRef.current?.send("state", { lose: true });
       }
     }, 1000);
   }
@@ -97,6 +111,7 @@ export default function App() {
     tickerRef.current = null;
   }
 
+  // Everyone can submit answers; correct ⇒ next puzzle; after last ⇒ win
   async function handleSubmit(answer) {
     console.log("Handling submit with answer:", answer, "current:", current?.id);
     if (!answer.trim()) return;
@@ -105,15 +120,28 @@ export default function App() {
       if (!current?.answer) throw new Error("Puzzle answer function missing");
       const correct = current.answer(answer);
       console.log("Answer correct:", correct);
-      if (chanRef.current) chanRef.current.send("try", { answer, nick: nickname });
+
+      chanRef.current?.send("try", { answer, nick: nickname });
 
       if (correct) {
-        console.log("Advancing from idx:", idx, "to", idx + 1, "PUZZLES.length:", PUZZLES.length);
-        advance(chanRef.current, setIdx, idx, setPhase, stopTicker, setChat);
-        // Force re-render check
-        console.log("After advance, idx should be:", idx + 1);
+        const next = idx + 1;
+        // Broadcast state so all clients advance in lockstep
+        chanRef.current?.send("state", { solved: current.id, nextIdx: next });
+
+        if (next < PUZZLES.length) {
+          setIdx(next);
+          setChat((c) => [
+            ...c,
+            { role: "assistant", content: "AI-Zeta: [static] …Seal released. Next protocol loaded." },
+          ]);
+        } else {
+          // All puzzles solved → Victory
+          stopTicker();
+          setPhase("win");
+          chanRef.current?.send("state", { win: true });
+        }
       } else {
-        // Ask AI-Zeta for a subtle nudge; append locally AND broadcast
+        // Subtle nudge for anyone's wrong attempt (local + broadcast)
         const nudge = await zetaSpeak([
           {
             role: "user",
@@ -121,11 +149,43 @@ export default function App() {
           },
         ]);
         setChat((c) => [...c, { role: "assistant", content: nudge }]);
-        if (chanRef.current) chanRef.current.send("ai", { text: nudge });
+        chanRef.current?.send("ai", { text: nudge });
       }
     } catch (err) {
       console.error("Submit failed:", err.message, err.stack);
       setChat((c) => [...c, { role: "assistant", content: `AI-Zeta: [static] Internal fault: ${err.message || "Unknown"}` }]);
+    }
+  }
+
+  // Everyone can talk to AI-Zeta via chat:
+  // Prefix triggers: `/z ...`, `@zeta ...`, or `zeta: ...`
+  async function handleChatSend(text) {
+    const raw = text.trim();
+
+    // Broadcast the user's message first (local echo too)
+    setChat((c) => [...c, { role: "user", content: raw }]);
+    chanRef.current?.send("chat", { from: nickname, text: raw, at: Date.now(), scope: "game" });
+
+    // Check if it's addressed to Zeta
+    const toZeta = [/^\/z\s+/i, /^@zeta\s+/i, /^zeta[:\s]/i].some((re) => re.test(raw));
+    if (!toZeta) return;
+
+    // Extract user question (strip the prefix)
+    const question = raw.replace(/^\/z\s+|^@zeta\s+|^zeta[:\s]*/i, "").trim() || raw;
+
+    // Ask Zeta with lightweight context (puzzle id)
+    try {
+      const prompt = current
+        ? `We are playing a puzzle game aboard Aether Station. Current puzzle id: "${current.id}". Respond in-character as AI-Zeta. User said: ${question}`
+        : `Respond in-character as AI-Zeta. User said: ${question}`;
+
+      const reply = await zetaSpeak([{ role: "user", content: prompt }]);
+      setChat((c) => [...c, { role: "assistant", content: reply }]);
+      chanRef.current?.send("ai", { text: reply });
+    } catch (err) {
+      const fail = "AI-Zeta: [static] …Interface degraded. Retry.";
+      setChat((c) => [...c, { role: "assistant", content: fail }]);
+      chanRef.current?.send("ai", { text: fail });
     }
   }
 
@@ -145,11 +205,11 @@ export default function App() {
   }
 
   useEffect(() => {
-    console.log('Current puzzle:', current, 'idx:', idx);
+    console.log("Current puzzle:", current, "idx:", idx);
   }, [idx, phase]);
 
   useEffect(() => {
-    console.log('Idx updated to:', idx);
+    console.log("Idx updated to:", idx);
   }, [idx]);
 
   return (
@@ -159,19 +219,7 @@ export default function App() {
       {phase === "game" && (
         <>
           <HUDTimer secondsLeft={secondsLeft} />
-          <Chat
-            messages={chat}
-            onSend={(text) => {
-              // local echo + broadcast to crew
-              setChat((c) => [...c, { role: "user", content: text }]);
-              chanRef.current?.send("chat", {
-                from: nickname,
-                text,
-                at: Date.now(),
-                scope: "game",
-              });
-            }}
-          />
+          <Chat messages={chat} onSend={handleChatSend} />
           {current && <PuzzleCard key={current.id} puzzle={current} onSolve={handleSubmit} />}
         </>
       )}
