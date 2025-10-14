@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { useEffect, useRef, useState } from "react";
 
 // ✅ Global styles (loads the background image + base layout)
@@ -54,13 +53,30 @@ export default function App() {
     startAtRef.current = startAt;
     startTicker();
     try {
+      // join game channel
       chanRef.current = await joinRoom(roomId, { id: crypto.randomUUID(), name: nickname });
       console.log("Channel initialized:", !!chanRef.current);
+
+      // --- NEW: subscribe to game-phase events ---
+      chanRef.current.on("ai", ({ text }) => {
+        setChat((c) => [...c, { role: "assistant", content: text }]);
+      });
+      chanRef.current.on("chat", ({ from, text }) => {
+        // Render as a user message; you could tag with from if you prefer
+        setChat((c) => [...c, { role: "user", content: `${from}: ${text}` }]);
+      });
+      chanRef.current.on("try", ({ nick, answer }) => {
+        // Optional feed of attempts
+        setChat((c) => [...c, { role: "user", content: `${nick} tried: ${answer}` }]);
+      });
+
+      // Initial AI welcome
       const welcome = await zetaSpeak([{ role: "user", content: "Introduce the game as AI-Zeta." }]);
-      setChat([...chat, { role: "assistant", content: welcome }]);
-      if (chanRef.current) chanRef.current.send("ai", { text: welcome });
+      setChat((c) => [...c, { role: "assistant", content: welcome }]); // functional update (prevents stale state)
+      chanRef.current.send("ai", { text: welcome });
     } catch (err) {
       console.error("Lobby ready failed:", err.message, err.stack);
+      setChat((c) => [...c, { role: "assistant", content: "AI-Zeta: [static] Link degraded… (try again)" }]);
     }
   }
 
@@ -97,16 +113,19 @@ export default function App() {
         // Force re-render check
         console.log("After advance, idx should be:", idx + 1);
       } else {
+        // Ask AI-Zeta for a subtle nudge; append locally AND broadcast
         const nudge = await zetaSpeak([
           {
             role: "user",
             content: `Wrong attempt for puzzle "${current.id}": "${answer}". Provide a subtle nudge (no spoilers) in one short line, in character.`,
           },
         ]);
+        setChat((c) => [...c, { role: "assistant", content: nudge }]);
         if (chanRef.current) chanRef.current.send("ai", { text: nudge });
       }
     } catch (err) {
       console.error("Submit failed:", err.message, err.stack);
+      setChat((c) => [...c, { role: "assistant", content: `AI-Zeta: [static] Internal fault: ${err.message || "Unknown"}` }]);
     }
   }
 
@@ -119,6 +138,10 @@ export default function App() {
     setChat([]);
     setSecondsLeft(TOTAL_SECONDS);
     startAtRef.current = null;
+    try {
+      chanRef.current?.channel?.unsubscribe?.();
+    } catch {}
+    chanRef.current = null;
   }
 
   useEffect(() => {
@@ -136,7 +159,19 @@ export default function App() {
       {phase === "game" && (
         <>
           <HUDTimer secondsLeft={secondsLeft} />
-          <Chat messages={chat} />
+          <Chat
+            messages={chat}
+            onSend={(text) => {
+              // local echo + broadcast to crew
+              setChat((c) => [...c, { role: "user", content: text }]);
+              chanRef.current?.send("chat", {
+                from: nickname,
+                text,
+                at: Date.now(),
+                scope: "game",
+              });
+            }}
+          />
           {current && <PuzzleCard key={current.id} puzzle={current} onSolve={handleSubmit} />}
         </>
       )}
