@@ -2,12 +2,6 @@
 import React, { useState, useEffect } from "react";
 import { zetaSpeak } from "../services/aiClient";
 
-/**
- * PuzzleCard component
- * Displays current puzzle prompt, handles user answers,
- * communicates with AI-Zeta for hints, and calls onSolve() on success.
- */
-
 export default function PuzzleCard({ puzzle, onSolve }) {
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -39,20 +33,10 @@ export default function PuzzleCard({ puzzle, onSolve }) {
 
     try {
       setSubmitting(true);
-      const correct = await Promise.resolve(puzzle.answer(answer));
-
-      if (correct) {
-        setFeedback("✅ Correct! The system hums back to life...");
-        setTimeout(() => {
-          setFeedback("");
-          onSolve?.(); // advance to next puzzle
-        }, 1200);
-      } else {
-        setFeedback("❌ Incorrect. Try again, or ask AI-Zeta for a hint.");
-      }
+      onSolve?.(answer); // Pass answer to parent (App) for check
     } catch (err) {
-      console.error("Answer check failed:", err);
-      setFeedback("⚠️ Internal error verifying your answer.");
+      console.error("Submit failed:", err);
+      setFeedback("⚠️ Internal error.");
     } finally {
       setSubmitting(false);
     }
@@ -63,21 +47,9 @@ export default function PuzzleCard({ puzzle, onSolve }) {
     try {
       setHintsUsed((h) => h + 1);
       setZetaResponse("AI-Zeta: [static] ...connecting...");
-      const prompt = `We are playing a puzzle game aboard Aether Station. 
-The current puzzle is titled "${puzzle.title}".
-Here is its description:
-
-${puzzle.prompt}
-
-The player is asking for a helpful hint — but not the full answer. 
-Respond as AI-Zeta would: concise, glitchy, immersive, slightly damaged AI voice.`;
-
-      const reply = await zetaSpeak([
-        { role: "system", content: "You are AI-Zeta, a damaged but helpful AI." },
-        { role: "user", content: prompt },
-      ]);
-
-      setZetaResponse(`AI-Zeta: ${reply}`);
+      const prompt = `We are playing a puzzle game aboard Aether Station. Provide a subtle hint for puzzle "${puzzle.id}" without spoilers.`;
+      const hint = await zetaSpeak([{ role: "user", content: prompt }]);
+      setZetaResponse(hint);
     } catch (err) {
       console.error("Hint error:", err);
       setZetaResponse("AI-Zeta: [static] (Signal lost... try again)");
@@ -87,7 +59,7 @@ Respond as AI-Zeta would: concise, glitchy, immersive, slightly damaged AI voice
   return (
     <div className="p-6 bg-black/70 border border-green-600 rounded-2xl text-green-200 max-w-xl mx-auto font-mono shadow-xl">
       <h2 className="text-green-400 font-bold text-lg mb-2">
-        [{puzzle.index ?? "?"}/{puzzle.total ?? "?"}] {puzzle.title}
+        {puzzle.title} {/* Use puzzle.title directly */}
       </h2>
       <pre className="whitespace-pre-wrap text-sm mb-3 text-green-100">
         {puzzle.prompt}

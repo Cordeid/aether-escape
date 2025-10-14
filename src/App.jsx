@@ -59,143 +59,48 @@ export default function App() {
     setPhase("lobby");
   }
 
-  // Called by LobbyScreen when the host starts (or when we receive a Start)
-  // payload: { roomId, startAt, players, isHost }
-  async function onLobbyReady(payload) {
-    setLobby(payload);
-
-    // Join a dedicated "game" channel to broadcast AI/chat/state
-    const user = { id: crypto.randomUUID(), name: nickname, color: "#9ef", ts: Date.now() };
-    const ctx = await joinRoom(payload.roomId + ":game", user);
-    chanRef.current = ctx;
-
-    // Everyone listens to game chat (players’ messages), AI replies, and state updates
-    ctx.on("chat", (m) => {
-      setChat((c) => [...c, { role: m.role || "user", content: m.text }]);
-    });
-
-    ctx.on("ai", (m) => {
-      setChat((c) => [...c, { role: "assistant", content: m.text }]);
-    });
-
-    ctx.on("state", (s) => {
-      if (typeof s.idx === "number") setIdx(s.idx);
-
-      if (typeof s.startAt === "number") {
-        startAtRef.current = s.startAt;
-        startTicker(); // sync timer from shared anchor
-      }
-
-      if (s.win) {
-        stopTicker();
-        setPhase("win");
-      }
-
-      if (s.gameOver) {
-        stopTicker();
-        setPhase("lose");
-      }
-    });
-
-    // If we already received a startAt from the lobby, enter game now
-    if (payload.startAt) {
-      startAtRef.current = payload.startAt;
-      setPhase("game");
-      startTicker();
-
-      // Host sends the intro & initial state once
-      if (payload.isHost) {
-        const intro = await zetaSpeak([
-          {
-            role: "user",
-            content: `Multiplayer run started for room ${payload.roomId}.
-Greet the crew briefly, remind them of the 10-minute limit, and introduce the first puzzle in <=2 lines.`,
-          },
-        ]);
-        ctx.send("ai", { text: intro });
-        ctx.send("state", { idx: 0, startAt: payload.startAt });
-      }
-    }
+  // Called by LobbyScreen when the host starts (or when "start" broadcast received)
+  async function onLobbyReady({ roomId, startAt, players, isHost }) {
+    setLobby({ roomId, startAt, players, isHost });
+    setPhase("game");
+    startAtRef.current = startAt;
+    startTicker();
+    chanRef.current = await joinRoom(roomId, { id: crypto.randomUUID(), name: nickname }); // Example, adjust based on full code
+    // Initial AI welcome
+    const welcome = await zetaSpeak([{ role: "user", content: "Introduce the game as AI-Zeta." }]);
+    setChat([...chat, { role: "assistant", content: welcome }]);
+    chanRef.current.send("ai", { text: welcome });
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // Timer (shared via startAt)
-  // ─────────────────────────────────────────────────────────────
+  // Timer logic
   function startTicker() {
-    stopTicker();
     tickerRef.current = setInterval(() => {
-      const startAt = startAtRef.current;
-      if (!startAt) return;
-
-      const elapsed = Math.floor((Date.now() - startAt) / 1000);
-      const left = Math.max(0, TOTAL_SECONDS - elapsed);
-      setSecondsLeft(left);
-
-      if (left <= 0) {
+      const secs = Math.max(0, TOTAL_SECONDS - Math.floor((Date.now() - startAtRef.current) / 1000));
+      setSecondsLeft(secs);
+      if (secs <= 0) {
         stopTicker();
-
-        // Host announces game over to everyone; clients also flip as fallback.
-        try {
-          if (lobby?.isHost && chanRef.current) {
-            chanRef.current.send("ai", { text: "AI-Zeta: [static]… the horizon takes us." });
-            chanRef.current.send("state", { gameOver: true });
-          }
-        } finally {
-          setPhase("lose"); // local fallback if host disconnects
-        }
+        setPhase("lose");
+        chanRef.current.send("state", { lose: true });
       }
     }, 1000);
   }
 
   function stopTicker() {
-    if (tickerRef.current) {
-      clearInterval(tickerRef.current);
-      tickerRef.current = null;
-    }
+    if (tickerRef.current) clearInterval(tickerRef.current);
+    tickerRef.current = null;
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Chat + Answers
+  // Puzzle submit (from PuzzleCard)
   // ─────────────────────────────────────────────────────────────
-  function sendSharedChat(from, text) {
-    chanRef.current?.send("chat", { from, text, role: "user", at: Date.now() });
-    setChat((c) => [...c, { role: "user", content: text }]); // optimistic echo
-  }
-
-  const handleSubmit = async (answer) => {
-    if (!current || isTimeUp(secondsLeft)) return;
-
-    sendSharedChat(nickname, answer);
-
-    if (!lobby?.isHost) return; // Non-hosts stop here (host controls AI/state)
+  async function handleSubmit(answer) {
+    if (!answer.trim()) return;
 
     const correct = current.answer(answer);
+    chanRef.current.send("try", { answer, nick: nickname });
 
     if (correct) {
-      const yay = await zetaSpeak([
-        {
-          role: "user",
-          content: `Team solved "${current.id}". Congratulate briefly and set up the next step in one short line.`,
-        },
-      ]);
-      chanRef.current.send("ai", { text: yay });
-
-      const nextIndex = advance(idx, true);
-      if (nextIndex < PUZZLES.length) {
-        chanRef.current.send("state", { idx: nextIndex });
-        const nextIntro = await zetaSpeak([
-          {
-            role: "user",
-            content: `Introduce the puzzle "${PUZZLES[nextIndex].title}" in <=2 lines. No spoilers.`,
-          },
-        ]);
-        chanRef.current.send("ai", { text: nextIntro });
-      } else {
-        chanRef.current.send("ai", { text: "AI-Zeta: Escape vector locked. Hold on…" });
-        chanRef.current.send("state", { win: true });
-        stopTicker();
-        setPhase("win");
-      }
+      advance(chanRef.current, setIdx, idx, setPhase, stopTicker, setChat);
     } else {
       const nudge = await zetaSpeak([
         {
@@ -205,7 +110,7 @@ Greet the crew briefly, remind them of the 10-minute limit, and introduce the fi
       ]);
       chanRef.current.send("ai", { text: nudge });
     }
-  };
+  }
 
   // ─────────────────────────────────────────────────────────────
   // Restart (back to start screen)
@@ -221,6 +126,11 @@ Greet the crew briefly, remind them of the 10-minute limit, and introduce the fi
     startAtRef.current = null;
   }
 
+  // Debug logging (remove in production)
+  useEffect(() => {
+    console.log('Current puzzle:', current);
+  }, [idx, phase]);
+
   // ─────────────────────────────────────────────────────────────
   // Render
   // ─────────────────────────────────────────────────────────────
@@ -234,15 +144,13 @@ Greet the crew briefly, remind them of the 10-minute limit, and introduce the fi
 
       {phase === "game" && (
         <>
-          <HUDTimer secondsLeft={secondsLeft} onTick={() => {}} />
+          <HUDTimer secondsLeft={secondsLeft} />
           <Chat messages={chat} />
           {current && (
             <PuzzleCard
               key={current.id}
-              title={`[${idx + 1}/${PUZZLES.length}] ${current.title}`}
-              prompt={current.prompt}
-              disabled={isTimeUp(secondsLeft)}
-              onSubmit={handleSubmit}
+              puzzle={current}
+              onSolve={handleSubmit}
             />
           )}
         </>
