@@ -3,12 +3,11 @@
 
 const MAX_TOKENS = 250;
 const TEMPERATURE = 0.6;
-const GEMINI_MODEL = "gemini-2.5-flash"; // Updated to supported model
+const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]; // Try multiple models
 const OPENAI_MODEL = "gpt-4o-mini";      // Solid fallback, still valid
 
 // Convert OpenAI-style messages → Gemini "contents"
 function toGeminiContents(messages, systemText) {
-  // Merge the system prompt into the first user message (Gemini has no system role)
   const merged = [];
   let systemMerged = false;
 
@@ -29,7 +28,6 @@ function toGeminiContents(messages, systemText) {
     }
   }
 
-  // If there was no user message at all, seed with system prompt
   if (!systemMerged && systemText) {
     merged.unshift({
       role: "user",
@@ -52,7 +50,6 @@ function geminiText(resp) {
 export default async function handler(req, res) {
   try {
     if (req.method === "GET") {
-      // Health check
       return res.status(200).json({ ok: true, route: "ai-zeta" });
     }
 
@@ -60,78 +57,52 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: "Method not allowed" });
     }
 
-    // Parse body (string or object)
-    const body =
-      typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
     const incoming = Array.isArray(body.messages) ? body.messages : [];
-
-    // Normalize messages to minimal OpenAI-like structure
     const messages = incoming
       .filter(m => m && typeof m.content === "string" && typeof m.role === "string")
       .map(m => ({ role: m.role, content: m.content }));
 
     const systemText = `You are AI-Zeta, a damaged but helpful AI aboard the Aether Station, a deep-space research platform slipping toward a black hole. Speak in character: concise, slightly glitchy (e.g., occasional [static] or clipped phrases), focused on guiding the crew to solve puzzles and escape. Avoid spoilers, prioritize subtle hints, and maintain an urgent yet supportive tone.`;
 
-    // ─────────────────────────────────────────────────────────────
-    // 1) Try Gemini first (if key exists)
-    // ─────────────────────────────────────────────────────────────
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
     if (GEMINI_API_KEY) {
-      try {
-        const r = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              contents: toGeminiContents(messages, systemText),
-              generationConfig: {
-                temperature: TEMPERATURE,
-                maxOutputTokens: MAX_TOKENS,
-              },
-            }),
-          }
-        );
+      for (const model of GEMINI_MODELS) {
+        try {
+          console.log(`Trying Gemini model: ${model}`);
+          const r = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: toGeminiContents(messages, systemText),
+                generationConfig: { temperature: TEMPERATURE, maxOutputTokens: MAX_TOKENS },
+              }),
+            }
+          );
 
-        const data = await r.json();
-        if (!r.ok) {
-          // If we have OpenAI, fall through to OpenAI
-          if (OPENAI_API_KEY) {
-            console.warn("Gemini failed, falling back to OpenAI:", data?.error || data);
+          const data = await r.json();
+          if (r.ok) {
+            const text = geminiText(data);
+            if (text) return res.status(200).json({ text });
+            console.warn(`Gemini ${model} returned empty content`);
           } else {
-            const msg = data?.error?.message || JSON.stringify(data);
-            return res.status(r.status).json({ error: `Gemini error: ${msg}` });
+            console.error(`Gemini ${model} error:`, data?.error || data);
           }
-        } else {
-          const text = geminiText(data);
-          if (text) return res.status(200).json({ text });
-          // Empty text → try OpenAI if available
-          if (!OPENAI_API_KEY) {
-            return res.status(502).json({ error: "Gemini returned empty content." });
-          }
-        }
-      } catch (err) {
-        // Network/parse error; try OpenAI if available
-        if (!OPENAI_API_KEY) {
-          return res.status(502).json({ error: `Gemini error: ${err.message}` });
+        } catch (err) {
+          console.error(`Gemini ${model} failed:`, err.message);
         }
       }
+      return res.status(502).json({ error: "All Gemini models failed." });
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 2) Fallback: OpenAI (if key exists)
-    // ─────────────────────────────────────────────────────────────
     if (OPENAI_API_KEY) {
       const r = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: OPENAI_MODEL,
           temperature: TEMPERATURE,
@@ -152,7 +123,6 @@ export default async function handler(req, res) {
       return res.status(200).json({ text });
     }
 
-    // If we got here, no provider succeeded
     return res.status(502).json({ error: "No provider produced a response." });
   } catch (err) {
     console.error("ai-zeta fatal:", err);
