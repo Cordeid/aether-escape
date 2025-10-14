@@ -1,111 +1,56 @@
-// api/ai-zeta.js  (ESM because package.json has "type":"module")
-const MAX_TOKENS = 250;
-
+// /api/ai-zeta.js — usando apenas Google Gemini 2.0 Flash (sem OpenAI)
 export default async function handler(req, res) {
   try {
-    if (req.method === "GET") {
-      // health check
-      return res.status(200).json({ ok: true, route: "ai-zeta" });
-    }
-    if (req.method !== "POST") {
-      return res.status(405).json({ error: "Method not allowed" });
-    }
+    if (req.method !== "POST") return res.status(405).end();
+    const { messages } = req.body || {};
 
-    // body may be an object already or a JSON string
-    const body =
-      typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-
-    const system = {
-      role: "system",
-      content:
-        "You are AI-Zeta, a damaged but helpful space-station AI. Speak concisely and in-character (glitchy/urgent). Give nudges, never full answers.",
-    };
-
-    const GEMINI_KEY = process.env.GEMINI_API_KEY;
-    const OPENAI_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_APIKEY;
-
-    if (!GEMINI_KEY && !OPENAI_KEY) {
-      return res.status(500).json({
-        error:
-          "No model key configured. Set GEMINI_API_KEY or OPENAI_API_KEY in Vercel → Project → Settings → Environment Variables.",
-      });
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: "Missing GEMINI_API_KEY" });
     }
 
-    // ── Prefer Gemini ─────────────────────────────────────────────────────────
-    if (GEMINI_KEY) {
-      const url =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
-        + `?key=${encodeURIComponent(GEMINI_KEY)}`;
+    const systemText = `
+You are AI-Zeta, a damaged but helpful station AI.
+Style: concise, glitchy, urgent; never reveal answers directly; nudge only.
+If asked for the answer, refuse and give a subtle hint.
+Use short lines; occasional [signal lost] under pressure.`
 
-      // Gemini expects: contents: [{ role:'user'|'model', parts:[{text}] }]
-      const oai = [system, ...messages];
-      const firstUserIndex = oai.findIndex((m) => m.role === "user");
-      let merged = oai.slice();
-
-      // Merge system into first user message (Gemini has no system role)
-      if (firstUserIndex >= 0) {
-        merged[firstUserIndex] = {
-          role: "user",
-          content: `${system.content}\n\n${oai[firstUserIndex].content}`,
-        };
-        merged = merged.filter((m, i) => !(i === 0 && oai[0].role === "system"));
-      }
-
-      const contents = merged.map((m) => ({
+    // Converte mensagens para formato Gemini
+    const contents = [
+      { role: "user", parts: [{ text: systemText }] },
+      ...(messages || []).map(m => ({
         role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: String(m.content || "") }],
-      }));
+        parts: [{ text: m.content }]
+      })),
+    ];
 
-      const r = await fetch(url, {
+    const r = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+      {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": process.env.GEMINI_API_KEY,
+        },
         body: JSON.stringify({
           contents,
-          generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.6 },
+          generationConfig: { temperature: 0.7 },
         }),
-      });
-
-      const data = await r.json();
-      if (!r.ok) {
-        const msg = data?.error?.message || JSON.stringify(data);
-        return res.status(r.status).json({ error: `Gemini error: ${msg}` });
       }
-
-      const text =
-        data?.candidates?.[0]?.content?.parts?.map((p) => p?.text).join("") ||
-        data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-        "";
-      if (!text) return res.status(500).json({ error: "Gemini: empty response" });
-      return res.status(200).json({ text });
-    }
-
-    // ── Fallback: OpenAI ──────────────────────────────────────────────────────
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        temperature: 0.6,
-        max_tokens: MAX_TOKENS,
-        messages: [system, ...messages],
-      }),
-    });
+    );
 
     const data = await r.json();
     if (!r.ok) {
-      const msg = data?.error?.message || JSON.stringify(data);
-      return res.status(r.status).json({ error: `OpenAI error: ${msg}` });
+      console.error("Gemini error:", data);
+      return res.status(200).json({
+        text: `AI-Zeta: [static] (Gemini error: ${data?.error?.message || r.status})`,
+      });
     }
 
-    const text = data?.choices?.[0]?.message?.content || "";
-    if (!text) return res.status(500).json({ error: "OpenAI: empty response" });
-    return res.status(200).json({ text });
-  } catch (err) {
-    console.error("ai-zeta server error:", err);
-    return res.status(500).json({ error: err?.message || "Unknown server error" });
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    return res.status(200).json({ text: text || "[signal lost]" });
+
+  } catch (e) {
+    console.error("ai-zeta exception:", e);
+    return res.status(200).json({ text: "AI-Zeta: [communication failure]" });
   }
 }
