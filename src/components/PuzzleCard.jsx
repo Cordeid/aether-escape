@@ -14,6 +14,7 @@ export default function PuzzleCard({ puzzle, onSolve }) {
     setFeedback("");
     setZetaResponse("");
     setHintsUsed(0);
+    console.log("Puzzle changed to:", puzzle?.id);
   }, [puzzle?.id]);
 
   if (!puzzle) {
@@ -35,8 +36,9 @@ export default function PuzzleCard({ puzzle, onSolve }) {
 
     try {
       setSubmitting(true);
-      console.log("Calling onSolve with:", answer);
-      await onSolve?.(answer);
+      console.log("Calling onSolve with:", answer, "onSolve exists:", !!onSolve);
+      if (!onSolve) throw new Error("onSolve prop is undefined");
+      await onSolve(answer);
       setFeedback("✅ Submitted (check game state)");
     } catch (err) {
       console.error("Submit failed:", err.message, err.stack);

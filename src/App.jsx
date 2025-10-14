@@ -23,14 +23,6 @@ import { zetaSpeak } from "./services/aiClient";
 // Realtime (Supabase)
 import { joinRoom } from "./services/realtime";
 
-/**
- * Phases:
- *  - "start" : nickname entry (StartScreen)
- *  - "lobby" : players gather & chat, host starts the run (LobbyScreen)
- *  - "game"  : shared chat + puzzles + synced 10:00 timer
- *  - "win"   : victory screen
- *  - "lose"  : game over (timer reached zero)
- */
 export default function App() {
   const [phase, setPhase] = useState("start");
   const [nickname, setNickname] = useState("");
@@ -51,9 +43,6 @@ export default function App() {
   const startAtRef = useRef(null);
   const tickerRef = useRef(null);
 
-  // ─────────────────────────────────────────────────────────────
-  // Start → Lobby
-  // ─────────────────────────────────────────────────────────────
   async function begin(name) {
     setNickname(name);
     setPhase("lobby");
@@ -66,17 +55,15 @@ export default function App() {
     startTicker();
     try {
       chanRef.current = await joinRoom(roomId, { id: crypto.randomUUID(), name: nickname });
+      console.log("Channel initialized:", !!chanRef.current);
       const welcome = await zetaSpeak([{ role: "user", content: "Introduce the game as AI-Zeta." }]);
       setChat([...chat, { role: "assistant", content: welcome }]);
-      chanRef.current.send("ai", { text: welcome });
+      if (chanRef.current) chanRef.current.send("ai", { text: welcome });
     } catch (err) {
       console.error("Lobby ready failed:", err.message, err.stack);
     }
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // Timer
-  // ─────────────────────────────────────────────────────────────
   function startTicker() {
     tickerRef.current = setInterval(() => {
       const secs = Math.max(0, TOTAL_SECONDS - Math.floor((Date.now() - startAtRef.current) / 1000));
@@ -94,15 +81,13 @@ export default function App() {
     tickerRef.current = null;
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // Puzzle submit (from PuzzleCard)
-  // ─────────────────────────────────────────────────────────────
   async function handleSubmit(answer) {
-    console.log("Handling submit with answer:", answer);
+    console.log("Handling submit with answer:", answer, "current:", current?.id);
     if (!answer.trim()) return;
 
     try {
-      const correct = current?.answer?.(answer) ?? false; // Safe check
+      if (!current?.answer) throw new Error("Puzzle answer function missing");
+      const correct = current.answer(answer);
       console.log("Answer correct:", correct);
       if (chanRef.current) chanRef.current.send("try", { answer, nick: nickname });
 
@@ -123,9 +108,6 @@ export default function App() {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // Restart (back to start screen)
-  // ─────────────────────────────────────────────────────────────
   function restart() {
     stopTicker();
     setPhase("start");
@@ -137,7 +119,6 @@ export default function App() {
     startAtRef.current = null;
   }
 
-  // Debug logging (remove in production)
   useEffect(() => {
     console.log('Current puzzle:', current);
   }, [idx, phase]);
@@ -146,44 +127,19 @@ export default function App() {
     console.log('Idx updated to:', idx);
   }, [idx]);
 
-  // ─────────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────────
   return (
     <div style={{ maxWidth: 900, margin: "40px auto", padding: 12 }}>
       {phase === "start" && <StartScreen onStart={begin} />}
-
-      {phase === "lobby" && (
-        <LobbyScreen nickname={nickname} onReady={onLobbyReady} />
-      )}
-
+      {phase === "lobby" && <LobbyScreen nickname={nickname} onReady={onLobbyReady} />}
       {phase === "game" && (
         <>
           <HUDTimer secondsLeft={secondsLeft} />
           <Chat messages={chat} />
-          {current && (
-            <PuzzleCard
-              key={current.id}
-              puzzle={current}
-              onSolve={handleSubmit}
-            />
-          )}
+          {current && <PuzzleCard key={current.id} puzzle={current} onSolve={handleSubmit} />}
         </>
       )}
-
-      {phase === "win" && (
-        <VictoryScreen
-          nickname={nickname}
-          secondsLeft={secondsLeft}
-          onRestart={restart}
-        />
-      )}
-
-      {phase === "lose" && (
-        <GameOverScreen onRestart={restart} />
-      )}
+      {phase === "win" && <VictoryScreen nickname={nickname} secondsLeft={secondsLeft} onRestart={restart} />}
+      {phase === "lose" && <GameOverScreen onRestart={restart} />}
     </div>
   );
-
-  export default App; // Add this line to fix the export
 }
