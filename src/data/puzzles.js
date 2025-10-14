@@ -68,55 +68,52 @@ const reactorCalibration = {
     }
   },
   hints: [
-    "Solve for x in 2x + 5 = 9.",
-    "Subtract 5 from both sides → 2x = 4.",
-    "x = 2. (Digits only.)",
+    "Solve for x: subtract 5 from both sides, then divide by 2.",
+    "x = (9 - 5) / 2 = 2. Enter just the number.",
   ],
 };
 
-// 2) Color override (logic order)
-//    Target sequence: RED → BLUE → YELLOW → GREEN (RBYG)
+// 2) Color override sequence (pattern matching)
+//    Correct sequence: RED BLUE GREEN YELLOW
 const colorOverride = {
   id: "color-override",
   title: "Color Override",
   prompt: [
-    "AI-Zeta: Insert energy cells in the correct order to stabilize the core.",
-    "Available cells: RED, BLUE, YELLOW, GREEN.",
+    "AI-Zeta: [static] Emergency override panel... colors must align with the spectrum log.",
     "",
-    "Recovered rule fragments:",
-    "• “Blue feeds on Red’s heat.”",
-    "• “Yellow only shines after Blue.”",
-    "• “Green follows sunlight but precedes night.”",
+    "Spectrum log (damaged):",
+    "• Primary thrust: RED",
+    "• Coolant flush: BLUE",
+    "• Power surge: GREEN",
+    "• Nav lock: YELLOW",
     "",
-    "Type the colors in order (letters or names). Examples:",
-    "  R B Y G   |   RED BLUE YELLOW GREEN   |   RED->BLUE->YELLOW->GREEN",
+    "Enter the sequence: **color1 color2 color3 color4** (e.g., red blue green yellow).",
   ].join("\n"),
   answer: (txt) => {
     try {
-      const seq = normalizeColorSequence(txt);
-      return equalsSequence(seq, ["RED", "BLUE", "YELLOW", "GREEN"]);
+      return equalsSequence(normalizeColorSequence(txt), ["RED", "BLUE", "GREEN", "YELLOW"]);
     } catch {
       return false;
     }
   },
   hints: [
-    "“Blue feeds on Red’s heat” ⇒ Red must come before Blue.",
-    "“Yellow only shines after Blue” ⇒ Blue before Yellow.",
-    "If sunlight is Yellow, who follows it? (Green.)",
-    "Final order: RED → BLUE → YELLOW → GREEN.",
+    "Match the order in the log: thrust → coolant → surge → nav.",
+    "Use full color names or first three letters (e.g., RED, BLU, GRN, YEL).",
   ],
 };
 
-// 3) HARD — Caesar-3 decryption (SECRET)
+// 3) Comms decrypt (Caesar cipher, shift back by 3)
+//    Encrypted: Vhfuhw → shift back 3 → Secret
 const commsDecrypt = {
   id: "comms-decrypt",
-  title: "Comms Decryption",
+  title: "Comms Decrypt",
   prompt: [
-    "AI-Zeta: A damaged transmission loop is repeating a ciphered word.",
-    "On a flickering monitor you read: **VHFUHW**",
+    "AI-Zeta: Incoming transmission garbled. Caesar shift detected.",
     "",
-    "Log note (pre-fall): “If the comms fail, roll the dial back three clicks.”",
-    "Decode the message (Caesar shift **back** by 3) and enter the plain English word."
+    "Encrypted message: VHFUHW",
+    "",
+    "Directive: “Shift all the dial back three clicks.”",
+    "Decode the message (Caesar shift **back** by 3) and enter the plain English word.",
   ].join("\n"),
   answer: (txt) => {
     try {
@@ -173,6 +170,6 @@ const dataCoreCorruption = {
 export const PUZZLES = [
   reactorCalibration,
   colorOverride,
-  commsDecrypt,       // <-- your Caesar-3 puzzle
+  commsDecrypt,
   dataCoreCorruption,
 ];
