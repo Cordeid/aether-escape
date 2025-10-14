@@ -3,8 +3,8 @@
 
 const MAX_TOKENS = 250;
 const TEMPERATURE = 0.6;
-const GEMINI_MODEL = "gemini-1.5-flash"; // fast, cheap, great for hints
-const OPENAI_MODEL = "gpt-4o-mini";      // solid fallback
+const GEMINI_MODEL = "gemini-2.5-flash"; // Updated to supported model
+const OPENAI_MODEL = "gpt-4o-mini";      // Solid fallback, still valid
 
 // Convert OpenAI-style messages → Gemini "contents"
 function toGeminiContents(messages, systemText) {
@@ -70,47 +70,36 @@ export default async function handler(req, res) {
       .filter(m => m && typeof m.content === "string" && typeof m.role === "string")
       .map(m => ({ role: m.role, content: m.content }));
 
-    const systemText =
-      "You are **AI-Zeta**, Aether Station’s damaged but helpful onboard AI. " +
-      "Speak briefly, glitchy, immersive. Nudge players; never reveal full answers. " +
-      "Stay in-character. Keep replies to 1–3 short lines.";
-
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY?.trim();
-    const OPENAI_API_KEY =
-      process.env.OPENAI_API_KEY?.trim() || process.env.OPENAI_APIKEY?.trim();
-
-    if (!GEMINI_API_KEY && !OPENAI_API_KEY) {
-      return res
-        .status(500)
-        .json({ error: "No AI key configured. Set GEMINI_API_KEY or OPENAI_API_KEY in Vercel." });
-    }
+    const systemText = `You are AI-Zeta, a damaged but helpful AI aboard the Aether Station, a deep-space research platform slipping toward a black hole. Speak in character: concise, slightly glitchy (e.g., occasional [static] or clipped phrases), focused on guiding the crew to solve puzzles and escape. Avoid spoilers, prioritize subtle hints, and maintain an urgent yet supportive tone.`;
 
     // ─────────────────────────────────────────────────────────────
-    // 1) Try Gemini first (if key is present)
+    // 1) Try Gemini first (if key exists)
     // ─────────────────────────────────────────────────────────────
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
     if (GEMINI_API_KEY) {
       try {
-        const url =
-          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent` +
-          `?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-
-        const contents = toGeminiContents(messages, systemText);
-
-        const r = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents,
-            generationConfig: {
-              maxOutputTokens: MAX_TOKENS,
-              temperature: TEMPERATURE,
+        const r = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
             },
-          }),
-        });
+            body: JSON.stringify({
+              contents: toGeminiContents(messages, systemText),
+              generationConfig: {
+                temperature: TEMPERATURE,
+                maxOutputTokens: MAX_TOKENS,
+              },
+            }),
+          }
+        );
 
         const data = await r.json();
         if (!r.ok) {
-          // If Gemini fails but we have OpenAI, fall through to OpenAI
+          // If we have OpenAI, fall through to OpenAI
           if (OPENAI_API_KEY) {
             console.warn("Gemini failed, falling back to OpenAI:", data?.error || data);
           } else {
