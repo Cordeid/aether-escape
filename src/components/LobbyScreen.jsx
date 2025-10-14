@@ -124,7 +124,6 @@ export default function LobbyScreen({ nickname, onReady }) {
               ))}
             </div>
 
-            {/* In the lobby, everyone can chat */}
             <form
               className="form-row"
               style={{ marginTop: 8 }}
@@ -139,9 +138,10 @@ export default function LobbyScreen({ nickname, onReady }) {
               <button className="btn" type="submit">Send</button>
             </form>
 
-            {/* Host label */}
+            {/* UPDATED label (was host-only for Zeta before) */}
             <p style={{ marginTop: 8, opacity: 0.8 }}>
-              Host: <strong>{members[0]?.name || "—"}</strong> (only the host will be able to talk to AI-Zeta during the mission)
+              Tip: anyone can talk to <strong>AI-Zeta</strong> during the mission. Start your message with{" "}
+              <code>/z</code>, <code>@zeta</code> or <code>zeta:</code>.
             </p>
           </div>
         </div>
