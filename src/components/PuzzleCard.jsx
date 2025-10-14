@@ -9,7 +9,6 @@ export default function PuzzleCard({ puzzle, onSolve }) {
   const [submitting, setSubmitting] = useState(false);
   const [hintsUsed, setHintsUsed] = useState(0);
 
-  // Reset state when puzzle changes
   useEffect(() => {
     setInput("");
     setFeedback("");
@@ -25,9 +24,8 @@ export default function PuzzleCard({ puzzle, onSolve }) {
     );
   }
 
-  // Handle answer submission
   async function handleSubmit(e) {
-    console.log("Submit clicked", e); // Debug
+    console.log("Submit clicked", e);
     e.preventDefault();
     const answer = input.trim();
     if (!answer) {
@@ -37,18 +35,17 @@ export default function PuzzleCard({ puzzle, onSolve }) {
 
     try {
       setSubmitting(true);
-      console.log("Calling onSolve with:", answer); // Debug
-      await onSolve?.(answer); // Ensure await to handle async
-      setFeedback("✅ Submitted (check game state)"); // Temporary feedback
+      console.log("Calling onSolve with:", answer);
+      await onSolve?.(answer);
+      setFeedback("✅ Submitted (check game state)");
     } catch (err) {
-      console.error("Submit failed:", err);
-      setFeedback("⚠️ Internal error.");
+      console.error("Submit failed:", err.message, err.stack);
+      setFeedback(`⚠️ Internal error: ${err.message || "Unknown"}`);
     } finally {
       setSubmitting(false);
     }
   }
 
-  // Ask AI-Zeta for a hint
   async function handleHint() {
     try {
       setHintsUsed((h) => h + 1);
@@ -57,7 +54,7 @@ export default function PuzzleCard({ puzzle, onSolve }) {
       const hint = await zetaSpeak([{ role: "user", content: prompt }]);
       setZetaResponse(hint);
     } catch (err) {
-      console.error("Hint error:", err);
+      console.error("Hint error:", err.message, err.stack);
       setZetaResponse("AI-Zeta: [static] (Signal lost... try again)");
     }
   }
@@ -80,7 +77,7 @@ export default function PuzzleCard({ puzzle, onSolve }) {
           type="submit"
           disabled={submitting}
           className="px-4 py-2 bg-green-600 hover:bg-green-700 text-black font-bold rounded-md disabled:opacity-50"
-          onClick={() => console.log("Button clicked, submitting:", submitting)} // Debug
+          onClick={() => console.log("Button clicked, submitting:", submitting)}
         >
           {submitting ? "..." : "Submit"}
         </button>
