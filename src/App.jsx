@@ -59,20 +59,20 @@ export default function App() {
     setPhase("lobby");
   }
 
-  // Called by LobbyScreen when the host starts (or when "start" broadcast received)
   async function onLobbyReady({ roomId, startAt, players, isHost }) {
     setLobby({ roomId, startAt, players, isHost });
     setPhase("game");
     startAtRef.current = startAt;
     startTicker();
-    chanRef.current = await joinRoom(roomId, { id: crypto.randomUUID(), name: nickname }); // Example, adjust based on full code
-    // Initial AI welcome
+    chanRef.current = await joinRoom(roomId, { id: crypto.randomUUID(), name: nickname });
     const welcome = await zetaSpeak([{ role: "user", content: "Introduce the game as AI-Zeta." }]);
     setChat([...chat, { role: "assistant", content: welcome }]);
     chanRef.current.send("ai", { text: welcome });
   }
 
-  // Timer logic
+  // ─────────────────────────────────────────────────────────────
+  // Timer
+  // ─────────────────────────────────────────────────────────────
   function startTicker() {
     tickerRef.current = setInterval(() => {
       const secs = Math.max(0, TOTAL_SECONDS - Math.floor((Date.now() - startAtRef.current) / 1000));
@@ -94,13 +94,17 @@ export default function App() {
   // Puzzle submit (from PuzzleCard)
   // ─────────────────────────────────────────────────────────────
   async function handleSubmit(answer) {
+    console.log("Handling submit with answer:", answer);
     if (!answer.trim()) return;
 
     const correct = current.answer(answer);
+    console.log("Answer correct:", correct);
     chanRef.current.send("try", { answer, nick: nickname });
 
     if (correct) {
+      console.log("Advancing from idx:", idx, "to", idx + 1);
       advance(chanRef.current, setIdx, idx, setPhase, stopTicker, setChat);
+      // Note: idx won't update immediately due to state async; useEffect will log it
     } else {
       const nudge = await zetaSpeak([
         {
@@ -130,6 +134,10 @@ export default function App() {
   useEffect(() => {
     console.log('Current puzzle:', current);
   }, [idx, phase]);
+
+  useEffect(() => {
+    console.log('Idx updated to:', idx);
+  }, [idx]);
 
   // ─────────────────────────────────────────────────────────────
   // Render
