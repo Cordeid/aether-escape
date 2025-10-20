@@ -45,11 +45,20 @@ export async function joinRoom(roomId, user) {
   channel.on("broadcast", { event: "start" }, (p) => listeners.start.forEach((fn) => fn(p.payload)));
   channel.on("broadcast", { event: "state" }, (p) => listeners.state.forEach((fn) => fn(p.payload)));
 
-  await channel.subscribe((status) => {
-    if (status === "SUBSCRIBED") {
-      channel.track(user);
-    }
-  });
+channel.subscribe(async (status) => {
+  console.log("[Realtime] Status:", status, "channel:", channelName);
+  if (status === "SUBSCRIBED") {
+    console.log("[Realtime] Tracking presence for", user);
+    const res = await channel.track({
+      id: user.id,
+      name: user.name,
+      color: user.color || "#8f8",
+      ts: Date.now(),
+    });
+    console.log("[Realtime] Presence track result:", res);
+  }
+});
+
 
   function on(type, fn) {
     listeners[type]?.push(fn);
