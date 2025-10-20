@@ -37,6 +37,7 @@ export default function LobbyScreen({ nickname, onReady }) {
 
       // Presence updates
       ctx.on("lobby", (list) => {
+        console.log("[Lobby] Received presence update:", list);
         const sorted = [...list].sort((a, b) => a.ts - b.ts);
         setMembers(sorted.slice(0, MAX_PLAYERS));
         setIsHost(sorted[0]?.id === user.id);
@@ -47,19 +48,32 @@ export default function LobbyScreen({ nickname, onReady }) {
           setIsFull(true);
           try {
             ctx.channel.unsubscribe();
-          } catch {}
+            console.log("[Lobby] Unsubscribed due to full room");
+          } catch (err) {
+            console.error("[Lobby] Unsubscribe error:", err);
+          }
         }
       });
 
       // Lobby chat
-      ctx.on("chat", (msg) => setLog((old) => [...old, msg]));
+      ctx.on("chat", (msg) => {
+        console.log("[Lobby] Received chat:", msg);
+        setLog((old) => [...old, msg]);
+      });
 
       // Host starts the game
-      ctx.on("start", (payload) => onReady({ roomId, ...payload, isHost }));
+      ctx.on("start", (payload) => {
+        console.log("[Lobby] Game start received:", payload);
+        onReady({ roomId, ...payload, isHost });
+      });
     })();
 
     return () => {
       mounted = false;
+      if (chanRef.current) {
+        chanRef.current.channel.unsubscribe();
+        console.log("[Lobby] Cleanup: Unsubscribed from room:", roomId);
+      }
     };
   }, [roomId, user, isHost, onReady]);
 
@@ -75,6 +89,7 @@ export default function LobbyScreen({ nickname, onReady }) {
       scope: "lobby",
     });
     setChatInput("");
+    console.log("[Lobby] Sent chat:", text);
   }
 
   // --- start game ---
@@ -84,6 +99,7 @@ export default function LobbyScreen({ nickname, onReady }) {
     const startAt = Date.now() + 1500; // sync delay
     chanRef.current.send("start", { startAt, players: members });
     onReady({ roomId, startAt, players: members, isHost: true });
+    console.log("[Lobby] Game started by host, players:", members.length);
   }
 
   // --- UI rendering ---

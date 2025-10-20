@@ -65,6 +65,8 @@ export async function joinRoom(roomId, user) {
     const people = Object.values(state).map((arr) => arr[0]);
     presence.list = people;
     listeners.lobby.forEach((fn) => fn(people));
+    // Force broadcast to ensure all clients sync
+    channel.send({ type: "broadcast", event: "lobby", payload: people });
   }
 
   // Presence sync from Supabase
@@ -79,7 +81,6 @@ export async function joinRoom(roomId, user) {
   channel.on("broadcast", { event: "start" }, (p) => listeners.start.forEach((fn) => fn(p.payload)));
   channel.on("broadcast", { event: "state" }, (p) => listeners.state.forEach((fn) => fn(p.payload)));
   channel.on("broadcast", { event: "try" }, (p) => listeners.try.forEach((fn) => fn(p.payload)));
-  // debug event you can fire from console: window.__rt.send("dbg", {hello:true})
   channel.on("broadcast", { event: "dbg" }, (p) => {
     console.log("[Realtime] (dbg) payload:", p.payload);
     listeners.dbg.forEach((fn) => fn(p.payload));
@@ -98,7 +99,7 @@ export async function joinRoom(roomId, user) {
           ts: user.ts || Date.now(),
         });
         console.log("[Realtime] Presence track result:", res);
-        // Emit once so UI updates immediately with at least me
+        // Immediate sync after tracking
         emitPresence();
       } catch (err) {
         console.error("[Realtime] track() failed:", err);
