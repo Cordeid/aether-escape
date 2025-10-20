@@ -79,15 +79,16 @@ const colorOverride = {
   id: "color-override",
   title: "Color Override",
   prompt: [
-    "AI-Zeta: [static] Emergency override panel... colors must align with the spectrum log.",
+    "AI-Zeta: Insert energy cells in the correct order to stabilize the core.",
+    "Available cells: YELLOW, BLUE, RED, GREEN.",
     "",
-    "Spectrum log (damaged):",
-    "• Primary thrust: RED",
-    "• Coolant flush: BLUE",
-    "• Power surge: GREEN",
-    "• Nav lock: YELLOW",
+    "Recovered rule fragments:",
+    "• “Blue feeds on Red’s heat.”",
+    "• “Yellow only shines after Blue.”",
+    "• “Green follows sunlight but precedes night.”",
     "",
-    "Enter the sequence: **color1 color2 color3 color4** (e.g., red blue green yellow).",
+    "Type the colors in order (letters or names). Examples:",
+    "  Y G B R   |   RED BLUE YELLOW GREEN   |   RED->BLUE->YELLOW->GREEN",
   ].join("\n"),
   answer: (txt) => {
     try {
@@ -97,8 +98,10 @@ const colorOverride = {
     }
   },
   hints: [
-    "Match the order in the log: thrust → coolant → surge → nav.",
-    "Use full color names or first three letters (e.g., RED, BLU, GRN, YEL).",
+    "“Blue feeds on Red’s heat” ⇒ Red must come before Blue.",
+    "“Yellow only shines after Blue” ⇒ Blue before Yellow.",
+    "If sunlight is Yellow, who follows it? (Green.)",
+    "Final order: RED → BLUE → YELLOW → GREEN.",
   ],
 };
 
