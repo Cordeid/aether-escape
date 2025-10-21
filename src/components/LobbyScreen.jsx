@@ -2,16 +2,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { joinRoom, makeId, randomColor } from "../services/realtime";
 
-const ROOM_ID    = (import.meta.env.VITE_ROOM_ID || "MAIN").toUpperCase();
+const ROOM_ID     = (import.meta.env.VITE_ROOM_ID || "MAIN").toUpperCase();
 const MAX_PLAYERS = 12;
 
 export default function LobbyScreen({ nickname, onReady }) {
-  const chanRef    = useRef(null);
-  const [members, setMembers]   = useState([]);
+  const chanRef = useRef(null);
+  const [members, setMembers] = useState([]);
   const [chatInput, setChatInput] = useState("");
-  const [log, setLog]           = useState([]);
-  const [isHost, setIsHost]     = useState(false);
-  const [isFull, setIsFull]     = useState(false);
+  const [log, setLog] = useState([]);
+  const [isHost, setIsHost] = useState(false);
+  const [isFull, setIsFull] = useState(false);
 
   const user = useMemo(() => ({
     id: crypto.randomUUID(),
@@ -20,27 +20,23 @@ export default function LobbyScreen({ nickname, onReady }) {
     ts: Date.now(),
   }), [nickname]);
 
-  // 🔒 Never read/write location.hash; always join global room once
+  // Join exactly once on mount
   useEffect(() => {
     let mounted = true;
-    let ctx;
+    let offLobby, offChat, offStart;
 
     (async () => {
-      ctx = await joinRoom(ROOM_ID, user);
-      if (!mounted) {
-        try { await ctx?.channel?.unsubscribe(); } catch {}
-        return;
-      }
+      const ctx = await joinRoom(ROOM_ID, user);
+      if (!mounted) return;
       chanRef.current = ctx;
 
       // Presence → UI
-      ctx.on("lobby", (list) => {
-        // oldest joined is host; enforce cap
+      offLobby = ctx.on("lobby", (list) => {
         const sorted = [...list].sort((a, b) => a.ts - b.ts);
         setMembers(sorted.slice(0, MAX_PLAYERS));
         setIsHost(sorted[0]?.id === user.id);
 
-        const meIdx = sorted.findIndex(m => m.id === user.id);
+        const meIdx = sorted.findIndex((m) => m.id === user.id);
         if (sorted.length > MAX_PLAYERS && meIdx >= MAX_PLAYERS) {
           setIsFull(true);
           try { ctx.channel.unsubscribe(); } catch {}
@@ -48,28 +44,28 @@ export default function LobbyScreen({ nickname, onReady }) {
       });
 
       // Lobby chat
-      ctx.on("chat", (msg) => setLog((old) => [...old, msg]));
+      offChat = ctx.on("chat", (msg) => setLog((old) => [...old, msg]));
 
-      // Host starts the game
-      ctx.on("start", (payload) => onReady({ roomId: ROOM_ID, ...payload, isHost }));
+      // Start signal
+      offStart = ctx.on("start", (payload) => {
+        onReady({ roomId: ROOM_ID, ...payload, isHost });
+      });
     })();
 
     return () => {
       mounted = false;
-      try { ctx?.channel?.unsubscribe(); } catch {}
+      try { offLobby?.(); offChat?.(); offStart?.(); } catch {}
+      // Do NOT unsubscribe the singleton channel here; other components may still use it.
+      // The page unload will close the WS naturally.
     };
-    // ❗ Empty deps — ensures a single subscription (prevents join/leave loop)
+    // empty deps → only once
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function sendLobbyChat() {
     const text = chatInput.trim();
     if (!text || !chanRef.current) return;
     chanRef.current.send("chat", {
-      from: user.name,
-      color: user.color,
-      text,
-      at: Date.now(),
-      scope: "lobby",
+      from: user.name, color: user.color, text, at: Date.now(), scope: "lobby",
     });
     setChatInput("");
   }
@@ -77,7 +73,7 @@ export default function LobbyScreen({ nickname, onReady }) {
   function startGame() {
     if (!isHost || !chanRef.current) return;
     if (members.length === 0 || members.length > MAX_PLAYERS) return;
-    const startAt = Date.now() + 1500; // small sync buffer
+    const startAt = Date.now() + 1500;
     chanRef.current.send("start", { startAt, players: members });
     onReady({ roomId: ROOM_ID, startAt, players: members, isHost: true });
   }
@@ -97,9 +93,7 @@ export default function LobbyScreen({ nickname, onReady }) {
     <main className="hero">
       <section className="glass" style={{ maxWidth: 900 }}>
         <h1 className="hero-title">Aether Station — Lobby</h1>
-        <p className="hero-sub">
-          Everyone joins a single shared room: <code>{ROOM_ID}</code> (max {MAX_PLAYERS} players)
-        </p>
+        <p className="hero-sub">Everyone joins a single shared room: <code>{ROOM_ID}</code> (max {MAX_PLAYERS} players)</p>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 14 }}>
           {/* Players */}
@@ -131,10 +125,6 @@ export default function LobbyScreen({ nickname, onReady }) {
               <input className="input" placeholder="Say hi to your crew…" value={chatInput} onChange={(e) => setChatInput(e.target.value)} />
               <button className="btn" type="submit">Send</button>
             </form>
-
-            <p style={{ marginTop: 8, opacity: 0.8 }}>
-              Tip: anyone can talk to <strong>AI-Zeta</strong> during the mission. Start your message with <code>/z</code>, <code>@zeta</code> or <code>zeta:</code>.
-            </p>
           </div>
         </div>
 
