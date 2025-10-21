@@ -140,4 +140,10 @@ export default function LobbyScreen({ nickname, onReady }) {
 
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
           <button className="btn" onClick={startGame} disabled={!isHost}>
-            {isHost ? "Start game (10:00)" : "Waiti
+            {isHost ? "Start game (10:00)" : "Waiting for host…"}
+          </button>
+        </div>
+      </section>
+    </main>
+  );
+}
