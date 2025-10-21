@@ -1,12 +1,13 @@
+// src/services/realtime.js
 import { createClient } from "@supabase/supabase-js";
 
 /**
- * FRONTEND env (Vercel ➜ Project ➜ Settings ➜ Environment Variables)
+ * FRONTEND env (Vercel → Project → Settings → Environment Variables)
  * VITE_SUPABASE_URL=https://<project>.supabase.co
  * VITE_SUPABASE_ANON_KEY=eyJhbGciOi...
- * (Do NOT use sb_secret_... here)
+ * (Use the anon key, NOT sb_secret_...)
  */
-const URL = import.meta.env.VITE_SUPABASE_URL;
+const URL  = import.meta.env.VITE_SUPABASE_URL;
 const ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!URL || !ANON) {
@@ -18,7 +19,7 @@ export const supabase = createClient(URL, ANON, {
   realtime: { params: { eventsPerSecond: 20 } },
 });
 
-// small utils you already use
+/* Utilities (unchanged) */
 export function makeId(len = 10) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: len }, () => chars[(Math.random() * chars.length) | 0]).join("");
@@ -26,36 +27,40 @@ export function makeId(len = 10) {
 const COLORS = ["#9ef","#ffb4a2","#ffd166","#b9fbc0","#bdb2ff","#f1c0e8","#90dbf4","#f4a261","#e9ff70","#a0c4ff","#caffbf","#ffc6ff"];
 export function randomColor(){ return COLORS[(Math.random() * COLORS.length) | 0]; }
 
-// 🔒 Single global room
-const GLOBAL_ROOM = (import.meta.env.VITE_ROOM_ID || "MAIN").toUpperCase();
+/* Single global room */
+const GLOBAL_ROOM  = (import.meta.env.VITE_ROOM_ID || "MAIN").toUpperCase();
 const CHANNEL_NAME = `room:${GLOBAL_ROOM}`;
 
 /**
  * Join the global room.
  * Returns { channel, presence, on, send }.
- *
- * Key guarantees:
- *  - subscribe via callback, not async return value (avoids race)
- *  - track() runs only after we see SUBSCRIBED
- *  - emits presence immediately after track so UI updates right away
- *  - very loud logs + window.__rt helpers for live debugging
+ * Defenses against “join/leave loop”:
+ *  - Close duplicate channels before creating a new one
+ *  - Subscribe via callback and track() exactly once
+ *  - Emit presence immediately after track so UI updates
  */
 export async function joinRoom(_ignored, user) {
-  // every browser gets its own channel instance; presence key is the user id
+  // 🔒 close any duplicate pre-existing channel with same topic
+  for (const c of supabase.getChannels?.() || []) {
+    if ((c.topic || c.params?.channel) === CHANNEL_NAME) {
+      console.log("[Realtime] Closing duplicate channel:", CHANNEL_NAME);
+      try { await c.unsubscribe(); } catch {}
+    }
+  }
+
   const channel = supabase.channel(CHANNEL_NAME, {
     config: { presence: { key: user.id }, broadcast: { ack: true } },
   });
 
-  // ---------- debug helpers ----------
+  // small debug surface
   if (typeof window !== "undefined") {
     window.__rt = window.__rt || {};
-    window.__rt.supabaseUrl = URL;
-    window.__rt.roomId = GLOBAL_ROOM;
-    window.__rt.channelName = CHANNEL_NAME;
-    window.__rt.channels = () => supabase.getChannels?.() || [];
-    window.__rt.presence = () => channel.presenceState();
-    window.__rt.send = (event, payload) => channel.send({ type: "broadcast", event, payload });
-    console.log("[Realtime] Using Supabase URL:", URL);
+    window.__rt.supabaseUrl  = URL;
+    window.__rt.roomId       = GLOBAL_ROOM;
+    window.__rt.channelName  = CHANNEL_NAME;
+    window.__rt.channels     = () => supabase.getChannels?.() || [];
+    window.__rt.presence     = () => channel.presenceState();
+    window.__rt.send         = (event, payload) => channel.send({ type: "broadcast", event, payload });
     console.log("[Realtime] Creating channel:", CHANNEL_NAME, "presence key:", user.id);
   }
 
@@ -63,32 +68,29 @@ export async function joinRoom(_ignored, user) {
   const listeners = { chat: [], ai: [], start: [], state: [], lobby: [], try: [], dbg: [] };
 
   function emitPresence() {
-    const state = channel.presenceState();     // { <key>: [ {id,name,...}, ... ] }
-    const people = Object.values(state).map((arr) => arr[0]); // first meta per key
+    const state = channel.presenceState();            // { key: [meta, ...] }
+    const people = Object.values(state).map(a => a[0]); // one meta per user
     presence.list = people;
-    listeners.lobby.forEach((fn) => fn(people));
+    (listeners.lobby || []).forEach(fn => fn(people));
   }
 
-  // Presence events (for visibility while debugging)
-  channel.on("presence", { event: "sync" }, () => {
-    console.log("[Realtime] presence SYNC", CHANNEL_NAME, channel.presenceState());
-    emitPresence();
-  });
-  channel.on("presence", { event: "join" }, (d) => console.log("[Realtime] presence JOIN", d));
-  channel.on("presence", { event: "leave" }, (d) => console.log("[Realtime] presence LEAVE", d));
+  // Presence visibility (optional logs)
+  channel.on("presence", { event: "sync"  }, () => { emitPresence(); });
+  channel.on("presence", { event: "join"  }, () => { /* optional log */ });
+  channel.on("presence", { event: "leave" }, () => { /* optional log */ });
 
   // Broadcast handlers
-  for (const ev of ["chat", "ai", "start", "state", "try", "dbg"]) {
-    channel.on("broadcast", { event: ev }, (pkt) => {
+  for (const ev of ["chat","ai","start","state","try","dbg"]) {
+    channel.on("broadcast", { event: ev }, pkt => {
       if (ev === "dbg") console.log("[Realtime] (dbg)", pkt.payload);
-      (listeners[ev] || []).forEach((fn) => fn(pkt.payload));
+      (listeners[ev] || []).forEach(fn => fn(pkt.payload));
     });
   }
 
-  // ----- subscribe with callback, then track -----
+  // Subscribe via callback, then track ONCE
   let tracked = false;
   await channel.subscribe(async (status) => {
-    console.log("[Realtime] Status:", status, "on", CHANNEL_NAME);
+    // status is one of: "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR"
     if (status === "SUBSCRIBED" && !tracked) {
       tracked = true;
       try {
@@ -98,20 +100,16 @@ export async function joinRoom(_ignored, user) {
           color: user.color || randomColor(),
           ts: user.ts || Date.now(),
         });
-        console.log("[Realtime] track() =>", res);
-        emitPresence(); // immediate update; UI won’t sit at 0
+        // ensure UI updates even if sync diff already happened
+        emitPresence();
       } catch (err) {
         console.error("[Realtime] track() failed:", err);
       }
     }
   });
 
-  function on(type, fn) {
-    (listeners[type] = listeners[type] || []).push(fn);
-  }
-  function send(type, payload) {
-    channel.send({ type: "broadcast", event: type, payload });
-  }
+  function on(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
+  function send(type, payload) { channel.send({ type: "broadcast", event: type, payload }); }
 
   return { channel, presence, on, send };
 }
