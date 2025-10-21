@@ -25,53 +25,64 @@ export function randomColor() {
   return COLORS[(Math.random() * COLORS.length) | 0];
 }
 
-/**
- * Join a realtime room.
- * Returns: { channel, presence, on, send }
- */
-export async function joinRoom(roomId, user) {
-  // Normalize defensively so everyone ends up in the exact same topic
+// Store a single channel instance per room
+const channelCache = new Map();
+
+function getOrCreateChannel(roomId, user) {
   const norm = String(roomId || "")
     .replace(/^#/, "")
     .trim()
     .replace(/[^a-z0-9]/gi, "")
     .toUpperCase()
     .slice(0, 16);
-
   const channelName = `room:${norm}`;
-  const channel = supabase.channel(channelName, {
-    config: { presence: { key: user.id }, broadcast: { ack: true } },
-  });
 
-  // ---- tiny debug surface (handy in DevTools) ----
-  if (typeof window !== "undefined") {
-    window.__rt = window.__rt || {};
-    window.__rt.supabaseUrl = URL;
-    window.__rt.roomId = norm;
-    window.__rt.channelName = channelName;
-    window.__rt.channels = () => supabase.getChannels?.() || [];
-    window.__rt.presence = () => channel.presenceState();
-    window.__rt.send = (event, payload) => channel.send({ type: "broadcast", event, payload });
-    console.log("[Realtime] Using Supabase URL:", URL);
-    console.log("[Realtime] Subscribing channel:", channelName);
+  if (!channelCache.has(channelName)) {
+    const channel = supabase.channel(channelName, {
+      config: { presence: { key: user.id }, broadcast: { ack: true } },
+    });
+
+    // Debug tools
+    if (typeof window !== "undefined") {
+      window.__rt = window.__rt || {};
+      window.__rt.supabaseUrl = URL;
+      window.__rt.roomId = norm;
+      window.__rt.channelName = channelName;
+      window.__rt.channels = () => supabase.getChannels?.() || [];
+      window.__rt.presence = () => channel.presenceState();
+      window.__rt.send = (event, payload) => channel.send({ type: "broadcast", event, payload });
+      console.log("[Realtime] Created channel:", channelName);
+    }
+
+    channelCache.set(channelName, channel);
   }
+
+  return channelCache.get(channelName);
+}
+
+/**
+ * Join a realtime room.
+ * Returns: { channel, presence, on, send }
+ */
+export async function joinRoom(roomId, user) {
+  const channel = getOrCreateChannel(roomId, user);
+  const channelName = channel.topic;
 
   const presence = { me: user, list: [] };
   const listeners = { chat: [], ai: [], start: [], state: [], lobby: [], try: [], dbg: [] };
 
   // Convert presence map → unique list (first meta per presence key)
   function emitPresence() {
-    const state = channel.presenceState(); // { key: [{...meta}, {...}] }
+    const state = channel.presenceState();
     const people = Object.values(state).map((arr) => arr[0]);
     presence.list = people;
     listeners.lobby.forEach((fn) => fn(people));
-    // Force broadcast to ensure all clients sync
-    channel.send({ type: "broadcast", event: "lobby", payload: people });
+    channel.send({ type: "broadcast", event: "lobby", payload: people }); // Force sync
   }
 
   // Presence sync from Supabase
   channel.on("presence", { event: "sync" }, () => {
-    console.log("[Realtime] presence sync on", channelName);
+    console.log("[Realtime] Presence sync on", channelName);
     emitPresence();
   });
 
@@ -86,7 +97,7 @@ export async function joinRoom(roomId, user) {
     listeners.dbg.forEach((fn) => fn(p.payload));
   });
 
-  // Subscribe then TRACK PRESENCE (critical)
+  // Subscribe and track presence
   await channel.subscribe(async (status) => {
     console.log("[Realtime] Status:", status, "channel:", channelName);
     if (status === "SUBSCRIBED") {
@@ -99,8 +110,7 @@ export async function joinRoom(roomId, user) {
           ts: user.ts || Date.now(),
         });
         console.log("[Realtime] Presence track result:", res);
-        // Immediate sync after tracking
-        emitPresence();
+        emitPresence(); // Immediate sync after tracking
       } catch (err) {
         console.error("[Realtime] track() failed:", err);
       }
